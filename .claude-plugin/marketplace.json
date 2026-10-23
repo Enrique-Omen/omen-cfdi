@@ -1,0 +1,18 @@
+{
+  "name": "omen",
+  "description": "Plugins de OMEN para Claude / OMEN plugins for Claude",
+  "owner": {
+    "name": "OMEN",
+    "email": "contacto@omen-it.tech",
+    "url": "https://omen-it.tech"
+  },
+  "plugins": [
+    {
+      "name": "omen-cfdi",
+      "source": "./",
+      "description": "CFDI de México: leer, validar, estatus SAT y EFOS, reporte de IVA, conciliar PPD y banco.",
+      "version": "0.1.0",
+      "category": "productivity"
+    }
+  ]
+}

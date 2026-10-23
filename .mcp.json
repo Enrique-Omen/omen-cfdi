@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "omen-cfdi": {
+      "command": "python3",
+      "args": ["${CLAUDE_PLUGIN_ROOT}/skills/cfdi-mx/scripts/cfdi.py", "mcp"]
+    }
+  }
+}

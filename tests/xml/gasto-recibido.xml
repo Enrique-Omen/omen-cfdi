@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- EJEMPLO SINTÉTICO de OMEN para pruebas: no es un CFDI real. EKU9003173C9 y XOJI740919U48 son RFC de pruebas del SAT; UUID, sello y montos inventados. -->
+<cfdi:Comprobante xmlns:cfdi="http://www.sat.gob.mx/cfd/4" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://www.sat.gob.mx/cfd/4 http://www.sat.gob.mx/sitio_internet/cfd/4/cfdv40.xsd" Version="4.0" Serie="PR" Folio="88" Fecha="2026-10-02T16:45:00" FormaPago="04" MetodoPago="PUE" SubTotal="3000.00" Moneda="MXN" Total="3480.00" TipoDeComprobante="I" Exportacion="01" LugarExpedicion="06000" NoCertificado="30001000000500003416" Certificado="RUpFTVBMTw==" Sello="U2VsbG9GaWN0aWNpb09NRU5wYXJhUHJ1ZWJhcw==">
+  <cfdi:Emisor Rfc="AAA010101AAA" Nombre="PROVEEDOR EJEMPLO" RegimenFiscal="601"/>
+  <cfdi:Receptor Rfc="EKU9003173C9" Nombre="ESCUELA KEMPER URGATE" DomicilioFiscalReceptor="42501" RegimenFiscalReceptor="601" UsoCFDI="G03"/>
+  <cfdi:Conceptos>
+    <cfdi:Concepto ClaveProdServ="44121600" Cantidad="3" ClaveUnidad="H87" Unidad="Pieza" Descripcion="Papelería (ejemplo)" ValorUnitario="1000.00" Importe="3000.00" ObjetoImp="02"><cfdi:Impuestos><cfdi:Traslados><cfdi:Traslado Base="3000.00" Impuesto="002" TipoFactor="Tasa" TasaOCuota="0.160000" Importe="480.00"/></cfdi:Traslados></cfdi:Impuestos></cfdi:Concepto>
+  </cfdi:Conceptos>
+  <cfdi:Impuestos TotalImpuestosTrasladados="480.00"><cfdi:Traslados><cfdi:Traslado Base="3000.00" Impuesto="002" TipoFactor="Tasa" TasaOCuota="0.160000" Importe="480.00"/></cfdi:Traslados></cfdi:Impuestos>
+  <cfdi:Complemento><tfd:TimbreFiscalDigital xmlns:tfd="http://www.sat.gob.mx/TimbreFiscalDigital" Version="1.1" UUID="55555555-5555-4555-8555-555555555555" FechaTimbrado="2026-10-02T16:45:10" RfcProvCertif="SPR190613I52" SelloCFD="EJEMPLO" NoCertificadoSAT="30001000000500003456" SelloSAT="EJEMPLO"/></cfdi:Complemento>
+</cfdi:Comprobante>

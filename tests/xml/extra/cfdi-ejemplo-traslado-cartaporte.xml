@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- EJEMPLO FICTICIO de OMEN para la demo «Suelta tu CFDI». No es un CFDI real: sin sello ni timbre válidos.
+     Traslado (T) con complemento Carta Porte 3.1. RFC de prueba del SAT (EKU9003173C9); domicilios, placas, licencia, UUID e IdCCP inventados. -->
+<cfdi:Comprobante xmlns:cfdi="http://www.sat.gob.mx/cfd/4" xmlns:cartaporte31="http://www.sat.gob.mx/CartaPorte31" xmlns:tfd="http://www.sat.gob.mx/TimbreFiscalDigital" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://www.sat.gob.mx/cfd/4 http://www.sat.gob.mx/sitio_internet/cfd/4/cfdv40.xsd http://www.sat.gob.mx/CartaPorte31 http://www.sat.gob.mx/sitio_internet/cfd/CartaPorte/CartaPorte31.xsd" Version="4.0" Serie="CP" Folio="318" Fecha="2026-10-16T06:10:00" SubTotal="0" Moneda="XXX" Total="0" TipoDeComprobante="T" Exportacion="01" LugarExpedicion="37000" NoCertificado="00000000000000000000" Certificado="EJEMPLO" Sello="EJEMPLO-SIN-SELLO">
+  <cfdi:Emisor Rfc="EKU9003173C9" Nombre="DISTRIBUIDORA EJEMPLO" RegimenFiscal="601"/>
+  <cfdi:Receptor Rfc="EKU9003173C9" Nombre="DISTRIBUIDORA EJEMPLO" DomicilioFiscalReceptor="37000" RegimenFiscalReceptor="601" UsoCFDI="S01"/>
+  <cfdi:Conceptos>
+    <cfdi:Concepto ClaveProdServ="31161500" Cantidad="4000" ClaveUnidad="H87" Unidad="Pieza" Descripcion="Tornillo hexagonal 3/8 (ejemplo)" ValorUnitario="0" Importe="0" ObjetoImp="01"/>
+    <cfdi:Concepto ClaveProdServ="40141700" Cantidad="120" ClaveUnidad="H87" Unidad="Pieza" Descripcion="Válvula de bola 1 pulgada (ejemplo)" ValorUnitario="0" Importe="0" ObjetoImp="01"/>
+  </cfdi:Conceptos>
+  <cfdi:Complemento>
+    <cartaporte31:CartaPorte Version="3.1" IdCCP="CCC00000000-0000-4000-8000-000000000318" TranspInternac="No" TotalDistRec="62">
+      <cartaporte31:Ubicaciones>
+        <cartaporte31:Ubicacion TipoUbicacion="Origen" IDUbicacion="OR000001" RFCRemitenteDestinatario="EKU9003173C9" FechaHoraSalidaLlegada="2026-10-16T07:00:00">
+          <cartaporte31:Domicilio Calle="Blvd. Ejemplo" NumeroExterior="100" Municipio="020" Estado="GUA" Pais="MEX" CodigoPostal="37000"/>
+        </cartaporte31:Ubicacion>
+        <cartaporte31:Ubicacion TipoUbicacion="Destino" IDUbicacion="DE000001" RFCRemitenteDestinatario="EKU9003173C9" FechaHoraSalidaLlegada="2026-10-16T08:15:00" DistanciaRecorrida="62">
+          <cartaporte31:Domicilio Calle="Calle Ejemplo" NumeroExterior="25" Municipio="017" Estado="GUA" Pais="MEX" CodigoPostal="36500"/>
+        </cartaporte31:Ubicacion>
+      </cartaporte31:Ubicaciones>
+      <cartaporte31:Mercancias PesoBrutoTotal="1180.000" UnidadPeso="KGM" NumTotalMercancias="2">
+        <cartaporte31:Mercancia BienesTransp="31161500" Descripcion="Tornillo hexagonal 3/8 (ejemplo)" Cantidad="4000" ClaveUnidad="H87" PesoEnKg="760.000"/>
+        <cartaporte31:Mercancia BienesTransp="40141700" Descripcion="Válvula de bola 1 pulgada (ejemplo)" Cantidad="120" ClaveUnidad="H87" PesoEnKg="420.000"/>
+        <cartaporte31:Autotransporte PermSCT="TPAF01" NumPermisoSCT="EJEMPLO0001">
+          <cartaporte31:IdentificacionVehicular ConfigVehicular="C2" PesoBrutoVehicular="8.5" PlacaVM="EJ1234A" AnioModeloVM="2022"/>
+          <cartaporte31:Seguros AseguraRespCivil="ASEGURADORA EJEMPLO" PolizaRespCivil="POL-EJ-0001"/>
+        </cartaporte31:Autotransporte>
+      </cartaporte31:Mercancias>
+      <cartaporte31:FiguraTransporte>
+        <cartaporte31:TiposFigura TipoFigura="01" RFCFigura="EKU9003173C9" NumLicencia="EJ0000001" NombreFigura="OPERADOR EJEMPLO"/>
+      </cartaporte31:FiguraTransporte>
+    </cartaporte31:CartaPorte>
+    <tfd:TimbreFiscalDigital xmlns:tfd="http://www.sat.gob.mx/TimbreFiscalDigital" Version="1.1" UUID="00000000-0000-4000-8000-0000000C0318" FechaTimbrado="2026-10-16T06:10:44" RfcProvCertif="PAC010101EJ1" SelloCFD="EJEMPLO" NoCertificadoSAT="00000000000000000000" SelloSAT="EJEMPLO"/>
+  </cfdi:Complemento>
+</cfdi:Comprobante>
