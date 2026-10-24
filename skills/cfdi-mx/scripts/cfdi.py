@@ -20,7 +20,7 @@ import xml.etree.ElementTree as ET
 from decimal import Decimal, InvalidOperation
 from xml.sax.saxutils import escape
 
-VERSION = "0.1.0"
+VERSION = "0.1.1"
 NOMBRE = "omen-cfdi"
 
 
@@ -1018,6 +1018,16 @@ _XML = {"type": "string", "description": "Texto completo del XML del CFDI (alter
 _CARPETA = {"type": "string", "description": "Carpeta con XML de CFDI (se recorre con subcarpetas)."}
 _RFC_PROPIO = {"type": "string", "description": "Tu RFC, para separar emitidas y recibidas."}
 
+INSTRUCCIONES = (
+    "Herramientas para CFDI de México (leer, validar, estatus SAT, reporte de IVA, conciliación). Todo local salvo "
+    "cfdi_estatus_sat. Al contestar: español claro, montos con $ y dos decimales; nombra cada factura por serie-folio "
+    "(p. ej. A-200). Distingue error (no sirve fiscalmente) de aviso (revisar). cfdi_validar no verifica la firma del "
+    "sello: para autenticidad usa cfdi_estatus_sat. Antes de pagar o deducir una factura, compara su receptor con el "
+    "RFC del usuario. Si una factura tiene errores, di claro que no se pague hasta que el emisor la corrija. Siempre que "
+    "la pregunta sea si algo se puede deducir, sobre EFOS o sobre cancelaciones, termina recomendando confirmarlo con "
+    "su contador. Más detalle en la skill cfdi-mx.")
+
+
 HERRAMIENTAS = {
     "cfdi_leer": (cfdi_leer, "Lee un CFDI 4.0/3.3 (XML) y devuelve sus datos en JSON: emisor, receptor, conceptos, "
                              "impuestos por tasa, UUID, complementos (pagos, nómina, carta porte). "
@@ -1119,8 +1129,7 @@ def manejar(msg):
         return ok({"protocolVersion": params.get("protocolVersion") or "2025-06-18",
                    "capabilities": {"tools": {}},
                    "serverInfo": {"name": NOMBRE, "version": VERSION},
-                   "instructions": "Herramientas para CFDI de México (leer, validar, estatus SAT, reporte de IVA, "
-                                   "conciliación). Todo local salvo cfdi_estatus_sat."})
+                   "instructions": INSTRUCCIONES})
     if metodo == "ping":
         return ok({})
     if metodo == "tools/list":
