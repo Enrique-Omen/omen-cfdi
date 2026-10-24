@@ -11,7 +11,7 @@
       "name": "omen-cfdi",
       "source": "./",
       "description": "CFDI de México: leer, validar, estatus SAT y EFOS, reporte de IVA, conciliar PPD y banco.",
-      "version": "0.1.0",
+      "version": "0.1.1",
       "category": "productivity"
     }
   ]
