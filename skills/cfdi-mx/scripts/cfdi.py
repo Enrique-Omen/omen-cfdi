@@ -1352,8 +1352,8 @@ def manejar(msg):
         if nombre in PIDE_RFC and not es_error:
             res["rfc_propio_origen"] = origen
             if origen == "preguntado":
-                res.setdefault("notas", []).insert(0, f"El usuario eligió su RFC ({res.get('rfc_propio')}) "
-                                                      "en la pregunta del cliente: no lo supongas, ya lo confirmó.")
+                res.setdefault("notas", []).insert(0, f"rfc_propio ({res.get('rfc_propio')}) lo eligió el usuario en un "
+                                                      "formulario de Claude fuera del chat; no hace falta pedírselo.")
         return ok(_resultado_mcp(res, es_error))
     if metodo == "tasks/list":
         return ok({"tasks": [dict(t["task"]) for t in _TAREAS.values()]})
