@@ -27,7 +27,7 @@ Solo Python 3.10+ y su biblioteca estándar. No instala nada. En Windows, si `py
 
 ```
 /plugin marketplace add Enrique-Omen/omen-cfdi
-/plugin install omen-cfdi@omen
+/plugin install omen-cfdi@omen-cfdi
 ```
 
 Para probarlo desde una copia local: `claude --plugin-dir ./omen-cfdi`.
@@ -64,7 +64,7 @@ Todo corre en tu equipo. Solo `cfdi_estatus_sat` y `cfdi_estatus_sat_carpeta` sa
 
 ## English
 
-OMEN CFDI is a Claude plugin (MCP server + Agent Skill) for Mexican electronic invoices (CFDI 4.0/3.3): parse XML to JSON, validate structure and math with Spanish explanations, check SAT status and EFOS listing, monthly VAT report, and reconcile PPD invoices against payment complements and bank statements. Pure Python standard library; everything is local except the SAT status query (sends RFCs, total, UUID and the last 8 characters of the seal). Install with `/plugin marketplace add <repo>` and `/plugin install omen-cfdi@omen`. It does not stamp, cancel, download from SAT, or verify the seal signature.
+OMEN CFDI is a Claude plugin (MCP server + Agent Skill) for Mexican electronic invoices (CFDI 4.0/3.3): parse XML to JSON, validate structure and math with Spanish explanations, check SAT status and EFOS listing, monthly VAT report, and reconcile PPD invoices against payment complements and bank statements. Pure Python standard library; everything is local except the SAT status query (sends RFCs, total, UUID and the last 8 characters of the seal). Install with `/plugin marketplace add <repo>` and `/plugin install omen-cfdi@omen-cfdi`. It does not stamp, cancel, download from SAT, or verify the seal signature.
 
 ---
 
