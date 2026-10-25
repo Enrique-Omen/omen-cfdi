@@ -9,8 +9,11 @@ Plugin para Claude (Claude Code y Cowork) con un servidor MCP y una Agent Skill 
 | `cfdi_leer` | CFDI 4.0 y 3.3 a JSON: emisor, receptor, conceptos, impuestos por tasa, UUID, relacionados, complementos: pagos 1.0/2.0 y nómina 1.2 con detalle; carta porte y otros solo se identifican. |
 | `cfdi_validar` | Errores y avisos en español: atributos obligatorios, RFC, UUID, timbre, catálogos, sumas (SubTotal, impuestos, Total), PUE/PPD vs forma de pago, P/T con moneda XXX, receptor genérico, saldos del complemento de pago. |
 | `cfdi_estatus_sat` | Consulta pública del SAT: Vigente/Cancelado, si es cancelable, estatus de cancelación y validación EFOS. |
+| `cfdi_estatus_sat_carpeta` | Estatus SAT de todos los XML de una carpeta (hasta `max_cfdi`, 200 por defecto), uno por uno, con conteo de vigentes, cancelados y no encontrados. |
 | `cfdi_reporte` | Carpeta completa: tabla por CFDI, resumen por mes y por RFC (emitidas/recibidas), IVA trasladado/retenido (facturado y en flujo), UUID duplicados, PPD con su pagado y saldo, «PPD sin complemento de pago». CSV opcional. |
 | `cfdi_conciliar_banco` | Carpeta + CSV del banco: empareja por monto exacto y fecha cercana; RFC o folio en la descripción desempatan. |
+
+Si tu cliente MCP lo soporta, `cfdi_reporte` y `cfdi_conciliar_banco` te preguntan tu RFC (con los más frecuentes de la carpeta como opciones) cuando no lo das; si no, siguen sin separar emitidas y recibidas. `cfdi_estatus_sat_carpeta` corre como Task (MCP 2025-11-25): el cliente recibe un `taskId`, consulta el avance con `tasks/get`, cancela con `tasks/cancel` y recoge el resultado con `tasks/result`; sin soporte de Tasks, responde en la misma llamada.
 
 Solo Python 3.10+ y su biblioteca estándar. No instala nada. En Windows, si `python3` no existe, instala Python desde python.org (o cambia `python3` por `py` en `.mcp.json`).
 
@@ -47,7 +50,7 @@ Pruebas: `python3 -m unittest discover -s tests -v` (la consulta en vivo al SAT:
 
 ## Privacidad
 
-Todo corre en tu equipo. Solo `cfdi_estatus_sat` sale a la red y envía al SAT: RFC emisor, RFC receptor, total, UUID y los últimos 8 caracteres del sello. Sin telemetría. Ver [PRIVACY.md](PRIVACY.md).
+Todo corre en tu equipo. Solo `cfdi_estatus_sat` y `cfdi_estatus_sat_carpeta` salen a la red y envían al SAT: RFC emisor, RFC receptor, total, UUID y los últimos 8 caracteres del sello. Sin telemetría. Ver [PRIVACY.md](PRIVACY.md).
 
 ## Límites
 

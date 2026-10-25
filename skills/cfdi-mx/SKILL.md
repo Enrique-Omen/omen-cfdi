@@ -5,7 +5,7 @@ description: Trabaja con CFDI de México (facturas electrónicas XML del SAT). �
 
 # CFDI de México (OMEN CFDI)
 
-Cinco herramientas. Con el plugin instalado están como herramientas MCP (`cfdi_leer`, `cfdi_validar`, `cfdi_estatus_sat`, `cfdi_reporte`, `cfdi_conciliar_banco`). Sin MCP (por ejemplo en claude.ai con la skill subida) funcionan igual por línea de comandos, con salida JSON:
+Seis herramientas. Con el plugin instalado están como herramientas MCP (`cfdi_leer`, `cfdi_validar`, `cfdi_estatus_sat`, `cfdi_estatus_sat_carpeta` para consultar al SAT toda una carpeta de una vez, `cfdi_reporte`, `cfdi_conciliar_banco`). Sin MCP (por ejemplo en claude.ai con la skill subida) funcionan igual por línea de comandos, con salida JSON:
 
 ```bash
 python3 scripts/cfdi.py cfdi_leer factura.xml
@@ -16,7 +16,7 @@ python3 scripts/cfdi.py cfdi_reporte carpeta/ --rfc_propio <TU_RFC> --csv_salida
 python3 scripts/cfdi.py cfdi_conciliar_banco carpeta/ --csv estado_cuenta.csv --rfc_propio <TU_RFC> --dias 5
 ```
 
-(También sirven los nombres cortos: `leer`, `validar`, `estatus_sat`, `reporte`, `conciliar_banco`.) Todo corre local con Python 3.10+ sin instalar nada. Solo `cfdi_estatus_sat` sale a internet (servicio público del SAT): necesita red; si no hay, dilo y sigue con lo local.
+(También sirven los nombres cortos: `leer`, `validar`, `estatus_sat`, `reporte`, `conciliar_banco`.) Todo corre local con Python 3.10+ sin instalar nada. Solo `cfdi_estatus_sat` y `cfdi_estatus_sat_carpeta` salen a internet (servicio público del SAT): necesita red; si no hay, dilo y sigue con lo local.
 
 ## Reglas al contestar
 - Habla en español claro, sin jerga. Montos con $ y dos decimales.

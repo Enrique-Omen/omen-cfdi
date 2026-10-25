@@ -1,6 +1,6 @@
 {
   "name": "omen-cfdi",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "description": "Lee, valida, consulta en el SAT, reporta IVA y concilia CFDI de México (XML). / Read, validate, check SAT status, VAT reports and reconciliation for Mexican CFDI invoices.",
   "author": {
     "name": "OMEN",

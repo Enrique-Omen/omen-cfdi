@@ -7,7 +7,9 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import threading
 import unittest
+from unittest import mock
 
 AQUI = os.path.dirname(os.path.abspath(__file__))
 SCRIPT = os.path.join(AQUI, "..", "skills", "cfdi-mx", "scripts", "cfdi.py")
@@ -229,8 +231,8 @@ class CLIyMCP(unittest.TestCase):
         self.assertEqual(resp[1]["result"]["protocolVersion"], "2025-06-18")
         self.assertEqual(resp[1]["result"]["serverInfo"]["name"], "omen-cfdi")
         nombres = {t["name"] for t in resp[2]["result"]["tools"]}
-        self.assertEqual(nombres, {"cfdi_leer", "cfdi_validar", "cfdi_estatus_sat", "cfdi_reporte",
-                                   "cfdi_conciliar_banco"})
+        self.assertEqual(nombres, {"cfdi_leer", "cfdi_validar", "cfdi_estatus_sat", "cfdi_estatus_sat_carpeta",
+                                   "cfdi_reporte", "cfdi_conciliar_banco"})
         r3 = resp[3]["result"]
         self.assertFalse(r3["isError"])
         self.assertFalse(json.loads(r3["content"][0]["text"])["valido"])
@@ -238,6 +240,239 @@ class CLIyMCP(unittest.TestCase):
         self.assertEqual(resp[5]["result"], {})
         self.assertEqual(resp[6]["error"]["code"], -32601)
         self.assertIn("servidor MCP", out.stderr)
+
+
+def sat_falso(ruta=None, **_):
+    """Respuesta del SAT sin red: ingreso-pue vigente, egreso cancelado, el resto No Encontrado (fixture real)."""
+    base = os.path.basename(ruta)
+    if base == "con-errores.xml":
+        raise cfdi.ErrorUso("XML ilegible de mentiras")
+    if base in ("ingreso-pue.xml", "egreso.xml"):
+        campos = {"Estado": "Vigente" if base == "ingreso-pue.xml" else "Cancelado",
+                  "EsCancelable": "Cancelable sin aceptación", "EstatusCancelacion": ""}
+    else:
+        with open(os.path.join(AQUI, "fixtures", "sat-no-encontrado.soap"), "rb") as f:
+            campos = cfdi.leer_respuesta_sat(f.read())
+    info = cfdi.leer_raiz(cfdi.cargar(ruta))
+    return {"consultado": True, "http": 200, "expresion_impresa": f"?re=A&rr=B&tt=1&id={info['uuid']}", **campos}
+
+
+class EstatusCarpeta(unittest.TestCase):
+    def test_conteos(self):
+        with mock.patch.object(cfdi, "cfdi_estatus_sat", sat_falso):
+            r = cfdi.cfdi_estatus_sat_carpeta(XML)
+        self.assertEqual((r["consultados"], r["vigentes"], r["cancelados"], r["no_encontrados"]), (7, 1, 1, 5))
+        self.assertEqual([e["archivo"] for e in r["errores"]], [x("con-errores.xml")])
+        self.assertIn("ilegible", r["errores"][0]["motivo"])
+        pue = next(f for f in r["cfdi"] if f["archivo"] == x("ingreso-pue.xml"))
+        self.assertEqual((pue["uuid"], pue["estado"], pue["error"]),
+                         ("11111111-1111-4111-8111-111111111111", "Vigente", None))
+
+    def test_tope_progreso_y_cancelacion(self):
+        avance = []
+        with mock.patch.object(cfdi, "cfdi_estatus_sat", sat_falso):
+            r = cfdi.cfdi_estatus_sat_carpeta(XML, max_cfdi=3, progreso=lambda k, n: avance.append((k, n)))
+            self.assertEqual((len(r["cfdi"]), r["omitidos"], avance), (3, 5, [(1, 3), (2, 3), (3, 3)]))
+            llamadas = iter([False, True])
+            r = cfdi.cfdi_estatus_sat_carpeta(XML, cancelado=lambda: next(llamadas))
+        self.assertEqual(len(r["cfdi"]), 1)
+
+    def test_red_caida_va_a_errores(self):
+        caida = {"consultado": False, "expresion_impresa": "?id=U", "error": "No se pudo conectar con el SAT"}
+        with mock.patch.object(cfdi, "cfdi_estatus_sat", lambda ruta=None: caida):
+            r = cfdi.cfdi_estatus_sat_carpeta(XML, max_cfdi=1)
+        self.assertEqual((r["consultados"], len(r["errores"])), (0, 1))
+
+
+# Servidor MCP real como subproceso; con `falso` el SAT se simula (demora = segundos por XML).
+DRIVER = """
+import importlib.util, sys, time
+spec = importlib.util.spec_from_file_location("cfdi", sys.argv[1])
+cfdi = importlib.util.module_from_spec(spec); spec.loader.exec_module(cfdi)
+sys.path.insert(0, sys.argv[2]); import test_cfdi; test_cfdi.cfdi = cfdi  # mismas clases de error
+def sat(ruta=None, **k):
+    time.sleep(float(sys.argv[3]))
+    return test_cfdi.sat_falso(ruta=ruta)
+cfdi.cfdi_estatus_sat = sat
+cfdi.servir_mcp()
+"""
+
+
+class Cliente:
+    def __init__(self, capacidades, falso=None):
+        orden = [sys.executable, "-c", DRIVER, SCRIPT, AQUI, str(falso)] if falso is not None else \
+            [sys.executable, SCRIPT, "mcp"]
+        self.p = subprocess.Popen(orden, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                                  text=True, encoding="utf-8")
+        self.cortafuegos = threading.Timer(60, self.p.kill)  # si algo se cuelga, la prueba falla en vez de colgarse
+        self.cortafuegos.start()
+        self.vistos = []
+        self.pedir(1, "initialize", {"protocolVersion": "2025-11-25", "capabilities": capacidades,
+                                     "clientInfo": {"name": "t", "version": "1"}})
+        self.enviar({"jsonrpc": "2.0", "method": "notifications/initialized"})
+
+    def enviar(self, msg):
+        self.p.stdin.write(json.dumps(msg) + "\n")
+        self.p.stdin.flush()
+
+    def leer(self):
+        msg = json.loads(self.p.stdout.readline())
+        self.vistos.append(msg)
+        return msg
+
+    def leer_hasta(self, id_):
+        while True:
+            msg = self.leer()
+            if msg.get("id") == id_ and "method" not in msg:
+                return msg
+
+    def pedir(self, id_, metodo, params=None):
+        self.enviar({"jsonrpc": "2.0", "id": id_, "method": metodo, "params": params or {}})
+        return self.leer_hasta(id_)
+
+    def cerrar(self):
+        self.cortafuegos.cancel()
+        self.p.stdin.close()
+        self.p.wait(timeout=10)
+        self.p.stdout.close()
+
+
+def llamada(id_, nombre, args, **extra):
+    return {"jsonrpc": "2.0", "id": id_, "method": "tools/call",
+            "params": {"name": nombre, "arguments": args, **extra}}
+
+
+def cuerpo(resp):
+    return json.loads(resp["result"]["content"][0]["text"])
+
+
+class Elicitation(unittest.TestCase):
+    def cliente(self, caps):
+        c = Cliente(caps)
+        self.addCleanup(c.cerrar)
+        return c
+
+    def test_pregunta_el_rfc_con_ping_y_cola(self):
+        c = self.cliente({"elicitation": {}})
+        c.enviar(llamada(2, "cfdi_reporte", {"carpeta": XML}))
+        pet = c.leer()
+        self.assertEqual((pet["method"], pet["id"], pet["params"]["mode"]), ("elicitation/create", "omen-1", "form"))
+        opciones = pet["params"]["requestedSchema"]["properties"]["rfc"]["oneOf"]
+        self.assertLessEqual(len(opciones), 6)
+        self.assertEqual(opciones[0]["const"], RFC)  # el más frecuente primero
+        self.assertTrue(opciones[0]["title"].startswith(RFC + " — "))
+        self.assertNotIn("XAXX010101000", [o["const"] for o in opciones])
+        c.enviar({"jsonrpc": "2.0", "id": 90, "method": "ping"})  # se contesta mientras espera
+        c.enviar({"jsonrpc": "2.0", "id": 91, "method": "tools/list"})  # se encola
+        self.assertEqual(c.leer(), {"jsonrpc": "2.0", "id": 90, "result": {}})
+        c.enviar({"jsonrpc": "2.0", "id": "omen-1", "result": {"action": "accept", "content": {"rfc": RFC}}})
+        r = cuerpo(c.leer())
+        self.assertEqual((r["rfc_propio"], r["rfc_propio_origen"]), (RFC, "preguntado"))
+        self.assertEqual({f["direccion"] for f in r["cfdi"]} - {"ajena"}, {"emitida", "recibida"})
+        self.assertEqual(len(c.leer()["result"]["tools"]), 6)  # lo encolado se atiende después, en orden
+
+    def test_conciliar_banco_tambien_pregunta(self):
+        c = self.cliente({"elicitation": {}})
+        c.enviar(llamada(2, "cfdi_conciliar_banco", {"carpeta": XML, "csv": CSV_BANCO}))
+        self.assertEqual(c.leer()["method"], "elicitation/create")
+        c.enviar({"jsonrpc": "2.0", "id": "omen-1", "result": {"action": "accept", "content": {"rfc": RFC}}})
+        self.assertEqual(cuerpo(c.leer())["rfc_propio_origen"], "preguntado")
+
+    def test_sin_capability_no_pregunta(self):
+        c = self.cliente({})
+        r = cuerpo(c.pedir(2, "tools/call", {"name": "cfdi_reporte", "arguments": {"carpeta": XML}}))
+        self.assertEqual((r["rfc_propio"], r["rfc_propio_origen"]), (None, None))
+        self.assertNotIn("elicitation/create", [m.get("method") for m in c.vistos])
+
+    def test_con_argumento_no_pregunta(self):
+        c = self.cliente({"elicitation": {}})
+        r = cuerpo(c.pedir(2, "tools/call", {"name": "cfdi_reporte", "arguments": {"carpeta": XML, "rfc_propio": RFC}}))
+        self.assertEqual(r["rfc_propio_origen"], "argumento")
+        self.assertNotIn("elicitation/create", [m.get("method") for m in c.vistos])
+
+    def test_decline_y_error_siguen_sin_rfc(self):
+        c = self.cliente({"elicitation": {}})
+        c.enviar(llamada(2, "cfdi_reporte", {"carpeta": XML}))
+        c.leer()
+        c.enviar({"jsonrpc": "2.0", "id": "omen-1", "result": {"action": "decline"}})
+        r = cuerpo(c.leer())
+        self.assertEqual((r["rfc_propio"], r["rfc_propio_origen"]), (None, None))
+        c.enviar(llamada(3, "cfdi_reporte", {"carpeta": XML}))
+        self.assertEqual(c.leer()["id"], "omen-2")
+        c.enviar({"jsonrpc": "2.0", "id": "omen-2", "error": {"code": -32601, "message": "no"}})
+        self.assertIsNone(cuerpo(c.leer())["rfc_propio_origen"])
+
+
+class Tasks(unittest.TestCase):
+    def cliente(self, demora):
+        c = Cliente({}, falso=demora)
+        self.addCleanup(c.cerrar)
+        return c
+
+    def test_initialize_y_tools_list(self):
+        c = self.cliente(0)
+        caps = c.vistos[0]["result"]["capabilities"]
+        self.assertEqual(caps["tasks"], {"list": {}, "cancel": {}, "requests": {"tools": {"call": {}}}})
+        self.assertEqual(c.vistos[0]["result"]["protocolVersion"], "2025-11-25")
+        herr = {t["name"]: t for t in c.pedir(2, "tools/list")["result"]["tools"]}
+        self.assertEqual({n for n, t in herr.items() if "execution" in t}, {"cfdi_estatus_sat_carpeta"})
+        self.assertEqual(herr["cfdi_estatus_sat_carpeta"]["execution"], {"taskSupport": "optional"})
+        self.assertTrue(herr["cfdi_estatus_sat_carpeta"]["annotations"]["openWorldHint"])
+
+    def test_llamada_sincrona(self):
+        c = self.cliente(0)
+        r = cuerpo(c.pedir(2, "tools/call", {"name": "cfdi_estatus_sat_carpeta", "arguments": {"carpeta": XML}}))
+        self.assertEqual((r["consultados"], r["vigentes"], r["cancelados"]), (7, 1, 1))
+
+    def test_ciclo_completo(self):
+        c = self.cliente(0.2)  # 8 XML x 0.2 s: tasks/result tiene que esperar sin congelar el servidor
+        creada = c.pedir(2, "tools/call", {"name": "cfdi_estatus_sat_carpeta", "arguments": {"carpeta": XML},
+                                           "task": {"ttl": 60000}})["result"]["task"]
+        self.assertEqual((creada["status"], creada["ttl"], creada["pollInterval"]), ("working", 60000, 2000))
+        self.assertEqual(creada["statusMessage"], "Consultando 0 de 8")
+        self.assertTrue(creada["createdAt"].endswith("Z"))
+        tid = creada["taskId"]
+        c.enviar({"jsonrpc": "2.0", "id": 3, "method": "tasks/result", "params": {"taskId": tid}})
+        self.assertEqual(c.pedir(4, "ping")["result"], {})  # el servidor sigue vivo mientras tasks/result espera
+        self.assertNotIn(3, [m.get("id") for m in c.vistos])
+        self.assertIn("Consultando", c.pedir(5, "tasks/get", {"taskId": tid})["result"]["statusMessage"])
+        res = c.leer_hasta(3)["result"]
+        self.assertFalse(res["isError"])
+        self.assertEqual(json.loads(res["content"][0]["text"])["consultados"], 7)
+        self.assertEqual(res["_meta"], {"io.modelcontextprotocol/related-task": {"taskId": tid}})
+        fin = c.pedir(6, "tasks/get", {"taskId": tid})["result"]
+        self.assertEqual(fin["status"], "completed")
+        self.assertIn(("notifications/tasks/status", "completed"),
+                      [(m.get("method"), m["params"]["status"]) for m in c.vistos if "params" in m and "status" in m["params"]])
+        self.assertEqual([t["taskId"] for t in c.pedir(7, "tasks/list")["result"]["tasks"]], [tid])
+        e = c.pedir(8, "tasks/cancel", {"taskId": tid})["error"]
+        self.assertEqual(e["code"], -32602)
+
+    def test_cancelar_una_en_curso(self):
+        c = self.cliente(0.3)
+        tid = c.pedir(2, "tools/call", {"name": "cfdi_estatus_sat_carpeta", "arguments": {"carpeta": XML},
+                                        "task": {}})["result"]["task"]["taskId"]
+        self.assertEqual(c.pedir(3, "tasks/cancel", {"taskId": tid})["result"]["status"], "cancelled")
+        self.assertEqual(c.pedir(4, "tasks/result", {"taskId": tid})["error"]["code"], -32602)
+        self.assertEqual(c.pedir(5, "tasks/get", {"taskId": tid})["result"]["status"], "cancelled")
+
+    def test_fallida_y_desconocida(self):
+        c = self.cliente(0)
+        tid = c.pedir(2, "tools/call", {"name": "cfdi_estatus_sat_carpeta", "arguments": {"carpeta": "/no/existe"},
+                                        "task": {}})["result"]["task"]["taskId"]
+        res = c.pedir(3, "tasks/result", {"taskId": tid})["result"]
+        self.assertTrue(res["isError"])
+        t = c.pedir(4, "tasks/get", {"taskId": tid})["result"]
+        self.assertEqual(t["status"], "failed")
+        self.assertIn("No existe la carpeta", t["statusMessage"])
+        for i, m in enumerate(("tasks/get", "tasks/result", "tasks/cancel"), 5):
+            self.assertEqual(c.pedir(i, m, {"taskId": "no-existe"})["error"]["code"], -32602)
+
+    def test_task_en_herramienta_sin_soporte_va_sincrona(self):
+        c = self.cliente(0)
+        r = c.pedir(2, "tools/call", {"name": "cfdi_validar", "arguments": {"ruta": x("ingreso-pue.xml")}, "task": {}})
+        self.assertNotIn("task", r["result"])
+        self.assertFalse(r["result"]["isError"])
 
 
 if __name__ == "__main__":

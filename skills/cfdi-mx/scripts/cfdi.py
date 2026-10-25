@@ -11,16 +11,21 @@ import csv
 import datetime as dt
 import json
 import os
+import queue
 import re
 import sys
+import threading
+import time
 import unicodedata
 import urllib.error
 import urllib.request
 import xml.etree.ElementTree as ET
+from collections import Counter, deque
 from decimal import Decimal, InvalidOperation
+from uuid import uuid4
 from xml.sax.saxutils import escape
 
-VERSION = "0.1.1"
+VERSION = "0.2.0"
 NOMBRE = "omen-cfdi"
 
 
@@ -691,6 +696,49 @@ def _xmls(carpeta):
                 yield os.path.join(base, a)
 
 
+def _lista_xml(carpeta, max_cfdi):
+    tope = int(max_cfdi if max_cfdi is not None else 200)
+    todos = sorted(_xmls(carpeta))
+    return todos[:tope], len(todos) - len(todos[:tope])
+
+
+def cfdi_estatus_sat_carpeta(carpeta=None, max_cfdi=200, progreso=None, cancelado=None):
+    """Estatus SAT de cada XML de la carpeta, uno por uno (sin paralelo, para no saturar al SAT).
+    `progreso(k, n)` se llama tras cada XML; `cancelado()` se revisa antes de cada uno."""
+    lote, omitidos = _lista_xml(carpeta, max_cfdi)
+    filas, errores = [], []
+    cuenta = {"Vigente": 0, "Cancelado": 0, "No Encontrado": 0}
+    consultados = 0
+    for k, ruta in enumerate(lote, 1):
+        if cancelado and cancelado():
+            break
+        fila = {"archivo": ruta, "uuid": None, "estado": None, "es_cancelable": None,
+                "estatus_cancelacion": None, "error": None}
+        try:
+            r = cfdi_estatus_sat(ruta=ruta)
+        except ErrorUso as e:
+            fila["error"] = str(e)
+        else:
+            m = re.search(r"&id=([^&]+)", r.get("expresion_impresa", ""))
+            fila["uuid"] = m and m.group(1)
+            if r.get("consultado"):
+                consultados += 1
+                fila.update(estado=r.get("Estado"), es_cancelable=r.get("EsCancelable"),
+                            estatus_cancelacion=r.get("EstatusCancelacion"))
+                if fila["estado"] in cuenta:
+                    cuenta[fila["estado"]] += 1
+            else:
+                fila["error"] = r.get("error", "Sin respuesta del SAT")
+        if fila["error"]:
+            errores.append({"archivo": ruta, "motivo": fila["error"]})
+        filas.append(fila)
+        if progreso:
+            progreso(k, len(lote))
+    return {"carpeta": carpeta, "consultados": consultados, "vigentes": cuenta["Vigente"],
+            "cancelados": cuenta["Cancelado"], "no_encontrados": cuenta["No Encontrado"], "errores": errores,
+            "omitidos": omitidos, "cfdi": filas}
+
+
 def _cargar_carpeta(carpeta):
     leidos, fallas = [], []
     for ruta in sorted(_xmls(carpeta)):
@@ -1025,7 +1073,8 @@ INSTRUCCIONES = (
     "sello: para autenticidad usa cfdi_estatus_sat. Antes de pagar o deducir una factura, compara su receptor con el "
     "RFC del usuario. Si una factura tiene errores, di claro que no se pague hasta que el emisor la corrija. Siempre que "
     "la pregunta sea si algo se puede deducir, sobre EFOS o sobre cancelaciones, termina recomendando confirmarlo con "
-    "su contador. Más detalle en la skill cfdi-mx.")
+    "su contador. Para varias facturas usa cfdi_estatus_sat_carpeta, no cfdi_estatus_sat una por una. "
+    "Más detalle en la skill cfdi-mx.")
 
 
 HERRAMIENTAS = {
@@ -1047,6 +1096,14 @@ HERRAMIENTAS = {
                           "total": {"type": "string", "description": "Total tal como viene en el XML."},
                           "sello8": {"type": "string", "description": "Últimos 8 caracteres del Sello (opcional)."}},
                          []),
+    "cfdi_estatus_sat_carpeta": (cfdi_estatus_sat_carpeta,
+                                 "Consulta en el SAT el estatus (Vigente/Cancelado/No Encontrado) de cada XML de una "
+                                 "carpeta, uno por uno. Úsala para varias facturas en vez de llamar cfdi_estatus_sat "
+                                 "muchas veces; puede tardar (corre como Task si el cliente lo pide). Necesita red. "
+                                 "Devuelve conteos y el estado de cada archivo. Checks SAT status for a whole folder.",
+                                 {"carpeta": _CARPETA,
+                                  "max_cfdi": {"type": "integer", "description": "Máximo de XML a consultar (default 200)."}},
+                                 ["carpeta"]),
     "cfdi_reporte": (cfdi_reporte, "Reporte de una carpeta de CFDI: tabla por factura, resúmenes por mes y por RFC, "
                                    "IVA trasladado/retenido (facturado y en flujo), UUID duplicados y conciliación de "
                                    "facturas PPD contra complementos de pago. Opcional: CSV. "
@@ -1093,31 +1150,170 @@ def a_json(obj, indent=None):
     return json.dumps(obj, ensure_ascii=False, default=_json_default, indent=indent)
 
 
-def llamar(nombre, argumentos):
+def llamar(nombre, argumentos, extra=None):
     if nombre not in HERRAMIENTAS:
         raise KeyError(nombre)
     fn, _, props, _ = HERRAMIENTAS[nombre]
     args = {k: v for k, v in (argumentos or {}).items() if k in props and v not in (None, "")}
-    return fn(**args)
+    return fn(**args, **(extra or {}))
 
 
 # ---------------------------------------------------------------- MCP stdio
+CON_TAREAS = {"cfdi_estatus_sat_carpeta"}  # herramientas con execution.taskSupport = optional
+PIDE_RFC = {"cfdi_reporte", "cfdi_conciliar_banco"}  # sin rfc_propio, se le pregunta al usuario (elicitation)
+_CAPS_CLIENTE = {}
+_SALIDA = threading.Lock()  # stdout lo usan el bucle, los hilos de tareas y tasks/result
+_ENTRADA = queue.Queue()  # líneas de stdin (las pone el hilo lector); None = stdin cerrado
+_PENDIENTES = deque()  # mensajes que llegaron mientras se esperaba al cliente
+_SEQ = 0
+_TAREAS = {}
+_CERROJO_TAREAS = threading.Lock()
+TERMINALES = ("completed", "failed", "cancelled")
+
+
 def _herramientas_mcp():
     return [{"name": n, "title": n.replace("_", " ").upper().replace("CFDI ", "CFDI: "), "description": d,
              "inputSchema": {"type": "object", "properties": p, "required": r},
              "annotations": {"readOnlyHint": n != "cfdi_reporte", "destructiveHint": False,
-                             "openWorldHint": n == "cfdi_estatus_sat"}}
+                             "openWorldHint": n in ("cfdi_estatus_sat", "cfdi_estatus_sat_carpeta")},
+             **({"execution": {"taskSupport": "optional"}} if n in CON_TAREAS else {})}
             for n, (_, d, p, r) in HERRAMIENTAS.items()]
+
+
+def escribir(obj):
+    with _SALIDA:
+        sys.stdout.write(a_json(obj) + "\n")
+        sys.stdout.flush()
+
+
+def _de_stdin(timeout=None):
+    """Siguiente mensaje de stdin; None si se cerró; queue.Empty si pasa el timeout (segundos)."""
+    limite = None if timeout is None else time.monotonic() + timeout
+    while True:
+        linea = _ENTRADA.get(timeout=None if limite is None else max(0, limite - time.monotonic()))
+        if linea is None:
+            return None
+        try:
+            return json.loads(linea)
+        except json.JSONDecodeError:
+            escribir({"jsonrpc": "2.0", "id": None, "error": {"code": -32700, "message": "Parse error"}})
+
+
+def pedir_al_cliente(metodo, params, timeout=120):
+    """Petición del servidor al cliente. Devuelve su `result`, o None si hay error, timeout o stdin cerrado.
+    Mientras espera: contesta ping al momento y deja en cola lo demás para el bucle principal."""
+    global _SEQ
+    _SEQ += 1
+    rid = f"omen-{_SEQ}"
+    escribir({"jsonrpc": "2.0", "id": rid, "method": metodo, "params": params})
+    limite = time.monotonic() + timeout
+    while True:
+        try:
+            msg = _de_stdin(max(0, limite - time.monotonic()))
+        except queue.Empty:
+            return None
+        if msg is None:
+            _PENDIENTES.append(None)
+            return None
+        if not isinstance(msg, dict):
+            _PENDIENTES.append(msg)
+        elif msg.get("id") == rid and "method" not in msg:
+            return None if "error" in msg else msg.get("result")
+        elif msg.get("method") == "ping" and "id" in msg:
+            escribir({"jsonrpc": "2.0", "id": msg["id"], "result": {}})
+        else:
+            _PENDIENTES.append(msg)
+
+
+def _preguntar_rfc(carpeta):
+    """Pregunta al usuario cuál es su RFC, ofreciendo los 6 más frecuentes de la carpeta. None si no hay respuesta."""
+    try:
+        leidos, _ = _cargar_carpeta(carpeta)
+    except ErrorUso:
+        return None
+    cuenta, nombres = Counter(), {}
+    for _, c in leidos:
+        for p in (c["emisor"], c["receptor"]):
+            if p["rfc"] and p["rfc"] not in RFC_GENERICOS:
+                cuenta[p["rfc"]] += 1
+                nombres.setdefault(p["rfc"], Counter())[p["nombre"]] += 1
+    if not cuenta:
+        return None
+    opciones = []
+    for rfc, _ in cuenta.most_common(6):
+        nombre = nombres[rfc].most_common(1)[0][0]
+        opciones.append({"const": rfc, "title": f"{rfc} — {nombre}" if nombre else rfc})
+    r = pedir_al_cliente("elicitation/create", {
+        "mode": "form", "message": "¿Cuál es tu RFC? Con él separo lo que emitiste de lo que recibiste.",
+        "requestedSchema": {"type": "object", "required": ["rfc"], "properties": {
+            "rfc": {"type": "string", "title": "Tu RFC", "oneOf": opciones}}}})
+    rfc = ((r or {}).get("content") or {}).get("rfc")
+    return rfc.strip() if (r or {}).get("action") == "accept" and isinstance(rfc, str) and rfc.strip() else None
+
+
+def _ejecutar(nombre, argumentos, extra=None):
+    """Corre la herramienta. Devuelve (resultado, es_error)."""
+    try:
+        return llamar(nombre, argumentos, extra), False
+    except ErrorUso as e:
+        return {"error": str(e)}, True
+    except Exception as e:  # noqa: BLE001 - se reporta al cliente, no tumba el servidor
+        log("falla en", nombre, repr(e))
+        return {"error": f"Falla interna: {e!r}"}, True
+
+
+def _resultado_mcp(res, es_error):
+    return {"content": [{"type": "text", "text": a_json(res)}], "isError": es_error}
+
+
+def _ahora():
+    return dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _terminar(t, estado, mensaje):
+    """Pasa la tarea a un estado terminal (solo si sigue en working) y avisa al cliente."""
+    with _CERROJO_TAREAS:
+        if t["task"]["status"] != "working":
+            return False
+        t["task"].update(status=estado, statusMessage=mensaje, lastUpdatedAt=_ahora())
+        t["hecho"].set()
+        aviso = dict(t["task"])
+    escribir({"jsonrpc": "2.0", "method": "notifications/tasks/status", "params": aviso})
+    return True
+
+
+def _correr_tarea(t, nombre, argumentos):
+    def progreso(k, n):
+        t["task"].update(statusMessage=f"Consultando {k} de {n}", lastUpdatedAt=_ahora())
+    res, es_error = _ejecutar(nombre, argumentos, {"progreso": progreso, "cancelado": t["cancelar"].is_set})
+    t["resultado"] = _resultado_mcp(res, es_error)
+    _terminar(t, "failed" if es_error else "completed", res["error"] if es_error else t["task"]["statusMessage"])
+
+
+def _crear_tarea(nombre, argumentos, pedido):
+    try:
+        total = len(_lista_xml(argumentos.get("carpeta"), argumentos.get("max_cfdi"))[0])
+    except (ErrorUso, ValueError, TypeError):
+        total = 0  # la herramienta misma reportará el error y la tarea quedará en failed
+    ahora = _ahora()
+    t = {"task": {"taskId": str(uuid4()), "status": "working", "statusMessage": f"Consultando 0 de {total}",
+                  "createdAt": ahora, "lastUpdatedAt": ahora, "ttl": pedido.get("ttl") or 3600000,
+                  "pollInterval": 2000},
+         "cancelar": threading.Event(), "hecho": threading.Event(), "resultado": None}
+    _TAREAS[t["task"]["taskId"]] = t
+    threading.Thread(target=_correr_tarea, args=(t, nombre, argumentos), daemon=True).start()
+    return {"task": dict(t["task"])}
 
 
 def manejar(msg):
     """Procesa un mensaje JSON-RPC. Devuelve la respuesta (dict) o None si es notificación."""
+    global _CAPS_CLIENTE
     if not isinstance(msg, dict):
         return {"jsonrpc": "2.0", "id": None, "error": {"code": -32600, "message": "Invalid Request"}}
     metodo, mid, params = msg.get("method"), msg.get("id"), msg.get("params") or {}
     es_notificacion = "id" not in msg
-    if es_notificacion:
-        return None  # notifications/initialized, notifications/cancelled, etc.
+    if es_notificacion or (metodo is None and ("result" in msg or "error" in msg)):
+        return None  # notifications/initialized, notifications/cancelled, respuestas tardías del cliente, etc.
 
     def ok(resultado):
         return {"jsonrpc": "2.0", "id": mid, "result": resultado}
@@ -1126,8 +1322,10 @@ def manejar(msg):
         return {"jsonrpc": "2.0", "id": mid, "error": {"code": codigo, "message": mensaje}}
 
     if metodo == "initialize":
+        _CAPS_CLIENTE = params.get("capabilities") or {}
         return ok({"protocolVersion": params.get("protocolVersion") or "2025-06-18",
-                   "capabilities": {"tools": {}},
+                   "capabilities": {"tools": {}, "tasks": {"list": {}, "cancel": {},
+                                                           "requests": {"tools": {"call": {}}}}},
                    "serverInfo": {"name": NOMBRE, "version": VERSION},
                    "instructions": INSTRUCCIONES})
     if metodo == "ping":
@@ -1138,33 +1336,66 @@ def manejar(msg):
         nombre = params.get("name")
         if nombre not in HERRAMIENTAS:
             return err(-32602, f"Herramienta desconocida: {nombre}")
-        try:
-            res, es_error = llamar(nombre, params.get("arguments")), False
-        except ErrorUso as e:
-            res, es_error = {"error": str(e)}, True
-        except Exception as e:  # noqa: BLE001 - se reporta al cliente, no tumba el servidor
-            log("falla en", nombre, repr(e))
-            res, es_error = {"error": f"Falla interna: {e!r}"}, True
-        return ok({"content": [{"type": "text", "text": a_json(res)}], "isError": es_error})
+        argumentos = params.get("arguments")
+        pedido = params.get("task")
+        if isinstance(pedido, dict) and nombre in CON_TAREAS:
+            return ok(_crear_tarea(nombre, argumentos if isinstance(argumentos, dict) else {}, pedido))
+        origen = None
+        if nombre in PIDE_RFC and isinstance(argumentos, dict):
+            if str(argumentos.get("rfc_propio") or "").strip():
+                origen = "argumento"
+            elif "elicitation" in _CAPS_CLIENTE:
+                rfc = _preguntar_rfc(argumentos.get("carpeta"))
+                if rfc:
+                    argumentos, origen = {**argumentos, "rfc_propio": rfc}, "preguntado"
+        res, es_error = _ejecutar(nombre, argumentos)
+        if nombre in PIDE_RFC and not es_error:
+            res["rfc_propio_origen"] = origen
+        return ok(_resultado_mcp(res, es_error))
+    if metodo == "tasks/list":
+        return ok({"tasks": [dict(t["task"]) for t in _TAREAS.values()]})
+    if metodo in ("tasks/get", "tasks/result", "tasks/cancel"):
+        t = _TAREAS.get(params.get("taskId"))
+        if t is None:
+            return err(-32602, f"Tarea desconocida: {params.get('taskId')}")
+        if metodo == "tasks/get":
+            return ok(dict(t["task"]))
+        if metodo == "tasks/cancel":
+            if not _terminar(t, "cancelled", "Cancelada por el cliente"):
+                return err(-32602, f"La tarea ya terminó ({t['task']['status']}): no se puede cancelar")
+            t["cancelar"].set()
+            return ok(dict(t["task"]))
+        t["hecho"].wait()  # bloquea: servir_mcp lo atiende en un hilo aparte
+        if t["task"]["status"] == "cancelled":
+            return err(-32602, "La tarea fue cancelada: no hay resultado")
+        return ok({**t["resultado"], "_meta": {"io.modelcontextprotocol/related-task": {"taskId": t["task"]["taskId"]}}})
     return err(-32601, f"Método no encontrado: {metodo}")
+
+
+def _atender(msg):
+    resp = manejar(msg)
+    if resp is not None:
+        escribir(resp)
+
+
+def _lector():
+    for linea in sys.stdin.buffer:
+        if linea.strip():
+            _ENTRADA.put(linea)
+    _ENTRADA.put(None)
 
 
 def servir_mcp():
     log(f"servidor MCP {VERSION} por stdio")
-    entrada = sys.stdin.buffer
-    for linea in entrada:
-        linea = linea.strip()
-        if not linea:
-            continue
-        try:
-            msg = json.loads(linea)
-        except json.JSONDecodeError:
-            resp = {"jsonrpc": "2.0", "id": None, "error": {"code": -32700, "message": "Parse error"}}
+    threading.Thread(target=_lector, daemon=True).start()
+    while True:
+        msg = _PENDIENTES.popleft() if _PENDIENTES else _de_stdin()
+        if msg is None:
+            return
+        if isinstance(msg, dict) and msg.get("method") == "tasks/result":
+            threading.Thread(target=_atender, args=(msg,), daemon=True).start()  # no congela el bucle
         else:
-            resp = manejar(msg)
-        if resp is not None:
-            sys.stdout.write(a_json(resp) + "\n")
-            sys.stdout.flush()
+            _atender(msg)
 
 
 # ---------------------------------------------------------------- CLI
