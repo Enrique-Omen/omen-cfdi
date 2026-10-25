@@ -8,4 +8,4 @@
 Contacto: contacto@omen-it.tech
 
 ## Privacy (English)
-Everything runs locally. Only `cfdi_estatus_sat` contacts Mexico's SAT public service, sending issuer and receiver RFC, total, UUID and the last 8 characters of the seal. No telemetry. Contact: contacto@omen-it.tech
+Everything runs locally. Only `cfdi_estatus_sat` and `cfdi_estatus_sat_carpeta` (one query per XML) contact Mexico's SAT public service, sending issuer and receiver RFC, total, UUID and the last 8 characters of the seal. No telemetry. Contact: contacto@omen-it.tech

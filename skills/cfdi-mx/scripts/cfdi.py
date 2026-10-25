@@ -1068,7 +1068,7 @@ _RFC_PROPIO = {"type": "string", "description": "Tu RFC, para separar emitidas y
 
 INSTRUCCIONES = (
     "Herramientas para CFDI de México (leer, validar, estatus SAT, reporte de IVA, conciliación). Todo local salvo "
-    "cfdi_estatus_sat. Al contestar: español claro, montos con $ y dos decimales; nombra cada factura por serie-folio "
+    "cfdi_estatus_sat y cfdi_estatus_sat_carpeta. Al contestar: español claro, montos con $ y dos decimales; nombra cada factura por serie-folio "
     "(p. ej. A-200). Distingue error (no sirve fiscalmente) de aviso (revisar). cfdi_validar no verifica la firma del "
     "sello: para autenticidad usa cfdi_estatus_sat. Antes de pagar o deducir una factura, compara su receptor con el "
     "RFC del usuario. Si una factura tiene errores, di claro que no se pague hasta que el emisor la corrija. Siempre que "
@@ -1159,6 +1159,7 @@ def llamar(nombre, argumentos, extra=None):
 
 
 # ---------------------------------------------------------------- MCP stdio
+VERSIONES_MCP = ("2024-11-05", "2025-03-26", "2025-06-18", "2025-11-25")  # la última es la de respaldo
 CON_TAREAS = {"cfdi_estatus_sat_carpeta"}  # herramientas con execution.taskSupport = optional
 PIDE_RFC = {"cfdi_reporte", "cfdi_conciliar_banco"}  # sin rfc_propio, se le pregunta al usuario (elicitation)
 _CAPS_CLIENTE = {}
@@ -1246,7 +1247,8 @@ def _preguntar_rfc(carpeta):
     r = pedir_al_cliente("elicitation/create", {
         "mode": "form", "message": "¿Cuál es tu RFC? Con él separo lo que emitiste de lo que recibiste.",
         "requestedSchema": {"type": "object", "required": ["rfc"], "properties": {
-            "rfc": {"type": "string", "title": "Tu RFC", "oneOf": opciones}}}})
+            "rfc": {"type": "string", "title": "Tu RFC", "oneOf": opciones,
+                    "description": "Si tu RFC no está en la lista, cancela y escríbelo en el chat."}}}})
     rfc = ((r or {}).get("content") or {}).get("rfc")
     return rfc.strip() if (r or {}).get("action") == "accept" and isinstance(rfc, str) and rfc.strip() else None
 
@@ -1295,9 +1297,15 @@ def _crear_tarea(nombre, argumentos, pedido):
         total = len(_lista_xml(argumentos.get("carpeta"), argumentos.get("max_cfdi"))[0])
     except (ErrorUso, ValueError, TypeError):
         total = 0  # la herramienta misma reportará el error y la tarea quedará en failed
-    ahora = _ahora()
+    ahora, ttl = _ahora(), pedido.get("ttl")
+    with _CERROJO_TAREAS:  # las terminadas cuyo ttl venció se olvidan
+        ya = dt.datetime.now(dt.timezone.utc)
+        for k, v in list(_TAREAS.items()):
+            creada = dt.datetime.strptime(v["task"]["createdAt"], "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=dt.timezone.utc)
+            if v["task"]["status"] in TERMINALES and creada + dt.timedelta(milliseconds=v["task"]["ttl"]) < ya:
+                del _TAREAS[k]
     t = {"task": {"taskId": str(uuid4()), "status": "working", "statusMessage": f"Consultando 0 de {total}",
-                  "createdAt": ahora, "lastUpdatedAt": ahora, "ttl": pedido.get("ttl") or 3600000,
+                  "createdAt": ahora, "lastUpdatedAt": ahora, "ttl": ttl if isinstance(ttl, int) and ttl > 0 else 3600000,
                   "pollInterval": 2000},
          "cancelar": threading.Event(), "hecho": threading.Event(), "resultado": None}
     _TAREAS[t["task"]["taskId"]] = t
@@ -1323,7 +1331,8 @@ def manejar(msg):
 
     if metodo == "initialize":
         _CAPS_CLIENTE = params.get("capabilities") or {}
-        return ok({"protocolVersion": params.get("protocolVersion") or "2025-06-18",
+        version = params.get("protocolVersion")
+        return ok({"protocolVersion": version if version in VERSIONES_MCP else VERSIONES_MCP[-1],
                    "capabilities": {"tools": {}, "tasks": {"list": {}, "cancel": {},
                                                            "requests": {"tools": {"call": {}}}}},
                    "serverInfo": {"name": NOMBRE, "version": VERSION},
@@ -1338,13 +1347,15 @@ def manejar(msg):
             return err(-32602, f"Herramienta desconocida: {nombre}")
         argumentos = params.get("arguments")
         pedido = params.get("task")
-        if isinstance(pedido, dict) and nombre in CON_TAREAS:
+        if isinstance(pedido, dict) and nombre not in CON_TAREAS:
+            return err(-32601, "Esta herramienta no corre como Task")
+        if isinstance(pedido, dict):
             return ok(_crear_tarea(nombre, argumentos if isinstance(argumentos, dict) else {}, pedido))
         origen = None
         if nombre in PIDE_RFC and isinstance(argumentos, dict):
             if str(argumentos.get("rfc_propio") or "").strip():
                 origen = "argumento"
-            elif "elicitation" in _CAPS_CLIENTE:
+            elif isinstance(e := _CAPS_CLIENTE.get("elicitation"), dict) and (not e or "form" in e):
                 rfc = _preguntar_rfc(argumentos.get("carpeta"))
                 if rfc:
                     argumentos, origen = {**argumentos, "rfc_propio": rfc}, "preguntado"
@@ -1352,8 +1363,9 @@ def manejar(msg):
         if nombre in PIDE_RFC and not es_error:
             res["rfc_propio_origen"] = origen
             if origen == "preguntado":
-                res.setdefault("notas", []).insert(0, f"rfc_propio ({res.get('rfc_propio')}) lo eligió el usuario en un "
-                                                      "formulario de Claude fuera del chat; no hace falta pedírselo.")
+                res.setdefault("notas", []).insert(0, f"rfc_propio ({res.get('rfc_propio')}) lo contestó el usuario en el "
+                                                      "formulario (elicitation) que mostró tu cliente MCP; no se lo "
+                                                      "vuelvas a pedir.")
         return ok(_resultado_mcp(res, es_error))
     if metodo == "tasks/list":
         return ok({"tasks": [dict(t["task"]) for t in _TAREAS.values()]})

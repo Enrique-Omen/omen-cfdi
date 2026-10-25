@@ -8,6 +8,7 @@ import subprocess
 import sys
 import tempfile
 import threading
+import time
 import unittest
 from unittest import mock
 
@@ -362,6 +363,7 @@ class Elicitation(unittest.TestCase):
         self.assertEqual(opciones[0]["const"], RFC)  # el más frecuente primero
         self.assertTrue(opciones[0]["title"].startswith(RFC + " — "))
         self.assertNotIn("XAXX010101000", [o["const"] for o in opciones])
+        self.assertIn("cancela y escríbelo en el chat", pet["params"]["requestedSchema"]["properties"]["rfc"]["description"])
         c.enviar({"jsonrpc": "2.0", "id": 90, "method": "ping"})  # se contesta mientras espera
         c.enviar({"jsonrpc": "2.0", "id": 91, "method": "tools/list"})  # se encola
         self.assertEqual(c.leer(), {"jsonrpc": "2.0", "id": 90, "result": {}})
@@ -369,6 +371,7 @@ class Elicitation(unittest.TestCase):
         r = cuerpo(c.leer())
         self.assertEqual((r["rfc_propio"], r["rfc_propio_origen"]), (RFC, "preguntado"))
         self.assertEqual({f["direccion"] for f in r["cfdi"]} - {"ajena"}, {"emitida", "recibida"})
+        self.assertIn("formulario (elicitation) que mostró tu cliente MCP", r["notas"][0])
         self.assertEqual(len(c.leer()["result"]["tools"]), 6)  # lo encolado se atiende después, en orden
 
     def test_conciliar_banco_tambien_pregunta(self):
@@ -383,6 +386,17 @@ class Elicitation(unittest.TestCase):
         r = cuerpo(c.pedir(2, "tools/call", {"name": "cfdi_reporte", "arguments": {"carpeta": XML}}))
         self.assertEqual((r["rfc_propio"], r["rfc_propio_origen"]), (None, None))
         self.assertNotIn("elicitation/create", [m.get("method") for m in c.vistos])
+
+    def test_cliente_solo_url_no_pregunta(self):
+        c = self.cliente({"elicitation": {"url": {}}})
+        r = cuerpo(c.pedir(2, "tools/call", {"name": "cfdi_reporte", "arguments": {"carpeta": XML}}))
+        self.assertIsNone(r["rfc_propio_origen"])
+        self.assertNotIn("elicitation/create", [m.get("method") for m in c.vistos])
+
+    def test_cliente_con_form_explicito_si_pregunta(self):
+        c = self.cliente({"elicitation": {"form": {}, "url": {}}})
+        c.enviar(llamada(2, "cfdi_reporte", {"carpeta": XML}))
+        self.assertEqual(c.leer()["method"], "elicitation/create")
 
     def test_con_argumento_no_pregunta(self):
         c = self.cliente({"elicitation": {}})
@@ -468,11 +482,27 @@ class Tasks(unittest.TestCase):
         for i, m in enumerate(("tasks/get", "tasks/result", "tasks/cancel"), 5):
             self.assertEqual(c.pedir(i, m, {"taskId": "no-existe"})["error"]["code"], -32602)
 
-    def test_task_en_herramienta_sin_soporte_va_sincrona(self):
+    def test_task_en_herramienta_sin_soporte_da_error(self):
         c = self.cliente(0)
         r = c.pedir(2, "tools/call", {"name": "cfdi_validar", "arguments": {"ruta": x("ingreso-pue.xml")}, "task": {}})
-        self.assertNotIn("task", r["result"])
-        self.assertFalse(r["result"]["isError"])
+        self.assertEqual((r["error"]["code"], r["error"]["message"]), (-32601, "Esta herramienta no corre como Task"))
+
+    def test_tareas_vencidas_se_olvidan(self):
+        c = self.cliente(0)
+        args = {"name": "cfdi_estatus_sat_carpeta", "arguments": {"carpeta": XML, "max_cfdi": 1}}
+        viejo = c.pedir(2, "tools/call", {**args, "task": {"ttl": 1}})["result"]["task"]["taskId"]
+        c.pedir(3, "tasks/result", {"taskId": viejo})  # ya terminó
+        time.sleep(1.1)
+        nuevo = c.pedir(4, "tools/call", {**args, "task": {}})["result"]["task"]["taskId"]
+        self.assertEqual([t["taskId"] for t in c.pedir(5, "tasks/list")["result"]["tasks"]], [nuevo])
+        self.assertEqual(c.pedir(6, "tasks/get", {"taskId": viejo})["error"]["code"], -32602)
+
+    def test_version_de_protocolo(self):
+        c = self.cliente(0)
+        for pedida, esperada in (("2024-11-05", "2024-11-05"), ("2025-03-26", "2025-03-26"),
+                                 ("2026-07-28", "2025-11-25")):
+            r = c.pedir(2, "initialize", {"protocolVersion": pedida, "capabilities": {}})
+            self.assertEqual(r["result"]["protocolVersion"], esperada)
 
 
 if __name__ == "__main__":
