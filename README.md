@@ -1,6 +1,17 @@
 # OMEN CFDI
 
-Plugin para Claude (Claude Code y Cowork) con un servidor MCP y una Agent Skill para **CFDI de México**. Le das tus XML y Claude los lee, los valida, pregunta al SAT si están vigentes y si el emisor está en la lista de EFOS, arma el reporte de IVA del mes y concilia facturas PPD contra complementos de pago y contra tu estado de cuenta.
+Revisa tus facturas del mes con Claude. Le das la carpeta de XML y te dice cuáles traen errores, cuáles ya no están vigentes en el SAT, si algún proveedor está en la lista de EFOS, cuánto IVA te toca y qué pagos no cuadran con tu banco.
+
+Instálalo en Claude Code con 2 comandos:
+
+```
+/plugin marketplace add Enrique-Omen/omen-cfdi
+/plugin install omen-cfdi@omen-cfdi
+```
+
+Y pregúntale, por ejemplo: «Valida las facturas de la carpeta `facturas/octubre` y dime cuáles tienen errores y por qué.»
+
+Necesitas Python 3.10 o más nuevo; no instala nada más. En Windows, si `python3` no existe, instala Python desde python.org o cambia `python3` por `py` en `.mcp.json`. Todo corre en tu computadora; solo la consulta de vigencia va al SAT.
 
 ## Qué hace
 
@@ -13,24 +24,15 @@ Plugin para Claude (Claude Code y Cowork) con un servidor MCP y una Agent Skill 
 | `cfdi_reporte` | Carpeta completa: tabla por CFDI, resumen por mes y por RFC (emitidas/recibidas), IVA trasladado/retenido (facturado y en flujo), UUID duplicados, PPD con su pagado y saldo, «PPD sin complemento de pago». CSV opcional. |
 | `cfdi_conciliar_banco` | Carpeta + CSV del banco: empareja por monto exacto y fecha cercana; RFC o folio en la descripción desempatan. |
 
-Si tu cliente MCP lo soporta, `cfdi_reporte` y `cfdi_conciliar_banco` te preguntan tu RFC (con los más frecuentes de la carpeta como opciones) cuando no lo das; si no, siguen sin separar emitidas y recibidas. `cfdi_estatus_sat_carpeta` corre como Task (MCP 2025-11-25): el cliente recibe un `taskId`, consulta el avance con `tasks/get`, cancela con `tasks/cancel` y recoge el resultado con `tasks/result`; sin soporte de Tasks, responde en la misma llamada. Claude Code (2.1.293, medido el 25-oct-2026) sí muestra el formulario del RFC, pero no pide Tasks: ahí responde en la misma llamada, y con 200 XML puede tardar minutos. Si no contestas el formulario en 2 minutos, el reporte sigue sin separar emitidas de recibidas.
-
-Solo Python 3.10+ y su biblioteca estándar. No instala nada. En Windows, si `python3` no existe, instala Python desde python.org (o cambia `python3` por `py` en `.mcp.json`).
-
 ## Ejemplos
 
 - «Valida las facturas de la carpeta `facturas/octubre` y dime cuáles tienen errores y por qué.»
 - «¿Esta factura de mi proveedor está vigente en el SAT y el proveedor aparece en la lista de EFOS? `proveedor/F-88.xml`»
 - «Con mi RFC EKU9003173C9, dame el IVA trasladado y retenido de octubre, las facturas PPD sin complemento de pago y concilia contra `banco/octubre.csv`.»
 
-## Instalar en Claude Code
+## Probarlo desde una copia local
 
-```
-/plugin marketplace add Enrique-Omen/omen-cfdi
-/plugin install omen-cfdi@omen-cfdi
-```
-
-Para probarlo desde una copia local: `claude --plugin-dir ./omen-cfdi`.
+`claude --plugin-dir ./omen-cfdi`
 
 ## Usar en claude.ai (sin MCP)
 
@@ -59,6 +61,13 @@ Todo corre en tu equipo. Solo `cfdi_estatus_sat` y `cfdi_estatus_sat_carpeta` sa
 - No descarga XML del SAT (descarga masiva): trabaja con los XML que ya tienes.
 - Con Pagos 1.0 (sin nodo Totales) el IVA en flujo de esos complementos sale en 0.
 - Catálogos embebidos en versión corta; no reemplaza la revisión de tu contador.
+- Probado con facturas sintéticas: la consulta al SAT responde en vivo, pero todavía no se probó con un CFDI real vigente.
+
+## Detalles técnicos
+
+Es un plugin para Claude (Claude Code y Cowork) con un servidor MCP y una Agent Skill.
+
+Si tu cliente MCP lo soporta, `cfdi_reporte` y `cfdi_conciliar_banco` te preguntan tu RFC (con los más frecuentes de la carpeta como opciones) cuando no lo das; si no, siguen sin separar emitidas y recibidas. `cfdi_estatus_sat_carpeta` corre como Task (MCP 2025-11-25): el cliente recibe un `taskId`, consulta el avance con `tasks/get`, cancela con `tasks/cancel` y recoge el resultado con `tasks/result`; sin soporte de Tasks, responde en la misma llamada. Claude Code (2.1.293, medido el 25-oct-2026) sí muestra el formulario del RFC, pero no pide Tasks: ahí responde en la misma llamada, y con 200 XML puede tardar minutos. Si no contestas el formulario en 2 minutos, el reporte sigue sin separar emitidas de recibidas.
 
 ---
 

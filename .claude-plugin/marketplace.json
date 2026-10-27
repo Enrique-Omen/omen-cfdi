@@ -10,7 +10,7 @@
     {
       "name": "omen-cfdi",
       "source": "./",
-      "description": "CFDI de México: leer, validar, estatus SAT y EFOS, reporte de IVA, conciliar PPD y banco.",
+      "description": "Revisa tus facturas CFDI con Claude: errores, vigencia en el SAT y EFOS, IVA del mes y conciliación con tu banco. Mexican CFDI invoices: errors, SAT status, VAT, bank match.",
       "version": "0.2.0",
       "category": "productivity"
     }

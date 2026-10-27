@@ -295,6 +295,7 @@ def sat(ruta=None, **k):
     time.sleep(float(sys.argv[3]))
     return test_cfdi.sat_falso(ruta=ruta)
 cfdi.cfdi_estatus_sat = sat
+sys.stdout.reconfigure(encoding="utf-8")  # como main(); sin esto Windows escribe cp1252
 cfdi.servir_mcp()
 """
 
@@ -332,9 +333,10 @@ class Cliente:
         return self.leer_hasta(id_)
 
     def cerrar(self):
-        self.cortafuegos.cancel()
         self.p.stdin.close()
+        self.p.stdout.read()  # drena: en Windows el tubo es chico y el servidor se quedaría escribiendo
         self.p.wait(timeout=10)
+        self.cortafuegos.cancel()
         self.p.stdout.close()
 
 
